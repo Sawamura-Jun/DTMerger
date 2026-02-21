@@ -372,7 +372,10 @@ class MainWindow(QMainWindow):
     def ensure_group4_mode(img: Image.Image) -> Image.Image:
         if img.mode == "1":
             return img
-        return img.convert("1")
+        dither_enum = getattr(Image, "Dither", None)
+        if dither_enum is not None:
+            return img.convert("1", dither=Image.Dither.NONE)
+        return img.convert("1", dither=Image.NONE)
 
 
 def main() -> int:
