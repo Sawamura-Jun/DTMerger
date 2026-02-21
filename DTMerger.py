@@ -28,6 +28,7 @@ Image.MAX_IMAGE_PIXELS = None
 
 WINDOW_WIDTH = 600
 WINDOW_HEIGHT = 400
+APP_ICON_PATH = Path(__file__).resolve().parent / "ico" / "DTMerger.ico"
 
 
 TIFF_EXTENSIONS = {".tif", ".tiff"}
@@ -99,6 +100,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("DTMerger")
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.setAcceptDrops(True)
+        if APP_ICON_PATH.exists():
+            from PySide6.QtGui import QIcon
+
+            self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
         self.page_list = PageListWidget()
         self.page_list.files_dropped.connect(self.add_files)
@@ -372,6 +377,10 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
+    if APP_ICON_PATH.exists():
+        from PySide6.QtGui import QIcon
+
+        app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     window = MainWindow()
     window.show()
     return app.exec()
