@@ -11,7 +11,6 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QApplication,
-    QFileDialog,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
@@ -26,8 +25,8 @@ from xdwlib import xdwopen
 # Large engineering TIFFs can exceed Pillow's decompression-bomb threshold.
 Image.MAX_IMAGE_PIXELS = None
 
-WINDOW_WIDTH = 900
-WINDOW_HEIGHT = 640
+WINDOW_WIDTH = 600
+WINDOW_HEIGHT = 400
 
 
 TIFF_EXTENSIONS = {".tif", ".tiff"}
@@ -106,11 +105,13 @@ class MainWindow(QMainWindow):
         self.down_button = QPushButton("↓")
         self.g4_button = QPushButton("G4形式で出力")
         self.lzw_button = QPushButton("LZW形式で出力")
+        self.clear_button = QPushButton("クリア")
 
         self.up_button.clicked.connect(self.move_selected_up)
         self.down_button.clicked.connect(self.move_selected_down)
         self.g4_button.clicked.connect(lambda: self.export_tiff("group4"))
         self.lzw_button.clicked.connect(lambda: self.export_tiff("tiff_lzw"))
+        self.clear_button.clicked.connect(self.clear_page_list)
 
         right_layout = QVBoxLayout()
         right_layout.addWidget(self.up_button)
@@ -119,6 +120,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.g4_button)
         right_layout.addWidget(self.lzw_button)
         right_layout.addStretch(1)
+        right_layout.addWidget(self.clear_button)
 
         main_layout = QHBoxLayout()
         main_layout.addWidget(self.page_list, stretch=1)
@@ -127,6 +129,7 @@ class MainWindow(QMainWindow):
         central = QWidget()
         central.setLayout(main_layout)
         self.setCentralWidget(central)
+        self.statusBar().showMessage("準備完了")
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if extract_supported_paths_from_mime(event.mimeData()):
@@ -210,34 +213,18 @@ class MainWindow(QMainWindow):
 
     def export_tiff(self, compression: str) -> None:
         if self.page_list.count() == 0:
-            QMessageBox.information(self, "情報", "出力対象のページがありません。")
+            self.statusBar().showMessage("出力対象のページがありません。", 5000)
             return
-
-        output_path_text, _ = QFileDialog.getSaveFileName(
-            self,
-            "保存先を選択",
-            str(Path.home() / "merged_output.tif"),
-            "TIFF (*.tif *.tiff)",
-        )
-        if not output_path_text:
-            return
-
-        output_path = Path(output_path_text)
-        if output_path.suffix.lower() not in TIFF_EXTENSIONS:
-            output_path = output_path.with_suffix(".tif")
 
         entries = self.collect_entries()
+        output_path = self.build_auto_output_path(entries)
         try:
             self.create_merged_tiff(entries, output_path, compression)
         except Exception as exc:
-            QMessageBox.critical(self, "出力エラー", f"TIFF出力に失敗しました。\n\n{exc}")
+            self.statusBar().showMessage(f"TIFF出力に失敗: {exc}", 10000)
             return
 
-        QMessageBox.information(
-            self,
-            "完了",
-            f"出力が完了しました。\n{output_path}",
-        )
+        self.statusBar().showMessage(f"出力完了: {output_path}", 10000)
 
     def collect_entries(self) -> List[PageEntry]:
         entries: List[PageEntry] = []
@@ -246,6 +233,17 @@ class MainWindow(QMainWindow):
             entry = item.data(Qt.UserRole)
             entries.append(entry)
         return entries
+
+    @staticmethod
+    def build_auto_output_path(entries: List[PageEntry]) -> Path:
+        first_entry = entries[0]
+        base_dir = first_entry.source_path.parent
+        base_name = f"{first_entry.source_path.stem}_mrg"
+        return base_dir / f"{base_name}.tif"
+
+    def clear_page_list(self) -> None:
+        self.page_list.clear()
+        self.statusBar().showMessage("リストをクリアしました。", 5000)
 
     def create_merged_tiff(
         self,
