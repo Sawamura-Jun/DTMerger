@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Dict, List
 
 from PIL import Image
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QItemSelectionModel, Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QHBoxLayout,
     QListWidget,
@@ -68,6 +69,7 @@ class PageListWidget(QListWidget):
         super().__init__()
         self.setAcceptDrops(True)
         self.setDragDropMode(QListWidget.NoDragDrop)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setAlternatingRowColors(True)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
@@ -196,20 +198,56 @@ class MainWindow(QMainWindow):
             return doc.pages
 
     def move_selected_up(self) -> None:
-        row = self.page_list.currentRow()
-        if row <= 0:
+        selected_rows = sorted(
+            {index.row() for index in self.page_list.selectedIndexes()}
+        )
+        if not selected_rows:
             return
-        item = self.page_list.takeItem(row)
-        self.page_list.insertItem(row - 1, item)
-        self.page_list.setCurrentRow(row - 1)
+
+        selected_set = set(selected_rows)
+        moved = False
+        for row in range(1, self.page_list.count()):
+            if row in selected_set and (row - 1) not in selected_set:
+                item = self.page_list.takeItem(row)
+                self.page_list.insertItem(row - 1, item)
+                selected_set.remove(row)
+                selected_set.add(row - 1)
+                moved = True
+
+        if moved:
+            self.restore_multi_selection(selected_set, focus_top=True)
 
     def move_selected_down(self) -> None:
-        row = self.page_list.currentRow()
-        if row < 0 or row >= self.page_list.count() - 1:
+        selected_rows = sorted(
+            {index.row() for index in self.page_list.selectedIndexes()}
+        )
+        if not selected_rows:
             return
-        item = self.page_list.takeItem(row)
-        self.page_list.insertItem(row + 1, item)
-        self.page_list.setCurrentRow(row + 1)
+
+        selected_set = set(selected_rows)
+        moved = False
+        for row in range(self.page_list.count() - 2, -1, -1):
+            if row in selected_set and (row + 1) not in selected_set:
+                item = self.page_list.takeItem(row)
+                self.page_list.insertItem(row + 1, item)
+                selected_set.remove(row)
+                selected_set.add(row + 1)
+                moved = True
+
+        if moved:
+            self.restore_multi_selection(selected_set, focus_top=False)
+
+    def restore_multi_selection(self, selected_rows: set[int], focus_top: bool) -> None:
+        self.page_list.clearSelection()
+        for row in sorted(selected_rows):
+            item = self.page_list.item(row)
+            if item is not None:
+                item.setSelected(True)
+
+        if not selected_rows:
+            return
+        focus_row = min(selected_rows) if focus_top else max(selected_rows)
+        self.page_list.setCurrentRow(focus_row, QItemSelectionModel.NoUpdate)
 
     def export_tiff(self, compression: str) -> None:
         if self.page_list.count() == 0:
