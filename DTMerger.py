@@ -8,7 +8,7 @@ from typing import Dict, List
 
 from PIL import Image
 from PySide6.QtCore import QItemSelectionModel, Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -97,27 +98,35 @@ class PageListWidget(QListWidget):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("DTMerger")
+        self.setWindowTitle("DTMerger v1.0.0")
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.setAcceptDrops(True)
         if APP_ICON_PATH.exists():
-            from PySide6.QtGui import QIcon
-
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
         self.page_list = PageListWidget()
         self.page_list.files_dropped.connect(self.add_files)
 
-        self.up_button = QPushButton("↑")
-        self.down_button = QPushButton("↓")
+        self.up_button = QPushButton()
+        self.up_button.setIcon(self.white_standard_icon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.up_button.setToolTip("上へ移動")
+
+        self.down_button = QPushButton()
+        self.down_button.setIcon(
+            self.white_standard_icon(QStyle.StandardPixmap.SP_ArrowDown)
+        )
+        self.down_button.setToolTip("下へ移動")
+
         self.g4_button = QPushButton("G4形式で出力")
         self.lzw_button = QPushButton("LZW形式で出力")
+        self.clear_selected_button = QPushButton("選択行クリア")
         self.clear_button = QPushButton("クリア")
 
         self.up_button.clicked.connect(self.move_selected_up)
         self.down_button.clicked.connect(self.move_selected_down)
         self.g4_button.clicked.connect(lambda: self.export_tiff("group4"))
         self.lzw_button.clicked.connect(lambda: self.export_tiff("tiff_lzw"))
+        self.clear_selected_button.clicked.connect(self.clear_selected_rows)
         self.clear_button.clicked.connect(self.clear_page_list)
 
         right_layout = QVBoxLayout()
@@ -127,6 +136,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.g4_button)
         right_layout.addWidget(self.lzw_button)
         right_layout.addStretch(1)
+        right_layout.addWidget(self.clear_selected_button)
         right_layout.addWidget(self.clear_button)
 
         main_layout = QHBoxLayout()
@@ -137,6 +147,14 @@ class MainWindow(QMainWindow):
         central.setLayout(main_layout)
         self.setCentralWidget(central)
         self.statusBar().showMessage("準備完了")
+
+    def white_standard_icon(self, standard_pixmap: QStyle.StandardPixmap) -> QIcon:
+        pixmap = self.style().standardIcon(standard_pixmap).pixmap(20, 20)
+        painter = QPainter(pixmap)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        painter.fillRect(pixmap.rect(), Qt.GlobalColor.white)
+        painter.end()
+        return QIcon(pixmap)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if extract_supported_paths_from_mime(event.mimeData()):
@@ -287,6 +305,22 @@ class MainWindow(QMainWindow):
     def clear_page_list(self) -> None:
         self.page_list.clear()
         self.statusBar().showMessage("リストをクリアしました。", 5000)
+
+    def clear_selected_rows(self) -> None:
+        selected_rows = sorted(
+            {index.row() for index in self.page_list.selectedIndexes()}, reverse=True
+        )
+        if not selected_rows:
+            self.statusBar().showMessage("削除する行が選択されていません。", 5000)
+            return
+
+        # 先に下側の行を削除し、未削除行の行番号がずれるのを防ぐ。
+        for row in selected_rows:
+            self.page_list.takeItem(row)
+
+        self.statusBar().showMessage(
+            f"選択した{len(selected_rows)}行を削除しました。", 5000
+        )
 
     def create_merged_tiff(
         self,

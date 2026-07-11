@@ -12,3 +12,6 @@ release/
 # Compile data
 __pycache__
 *.pyc
+
+# other
+AGENTS.md
