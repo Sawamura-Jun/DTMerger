@@ -8,11 +8,13 @@ from typing import Dict, List
 
 from PIL import Image
 from PySide6.QtCore import QItemSelectionModel, Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QPainter
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QIntValidator, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QHBoxLayout,
+    QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -30,6 +32,9 @@ Image.MAX_IMAGE_PIXELS = None
 WINDOW_WIDTH = 600
 WINDOW_HEIGHT = 400
 APP_ICON_PATH = Path(__file__).resolve().parent / "ico" / "DTMerger.ico"
+DEFAULT_DOCUWORKS_DPI = 400
+MIN_DOCUWORKS_DPI = 10
+MAX_DOCUWORKS_DPI = 600
 
 
 TIFF_EXTENSIONS = {".tif", ".tiff"}
@@ -119,6 +124,16 @@ class MainWindow(QMainWindow):
 
         self.g4_button = QPushButton("G4形式で出力")
         self.lzw_button = QPushButton("LZW形式で出力")
+        self.dpi_label = QLabel("DW変換DPI：")
+        self.dpi_input = QLineEdit(str(DEFAULT_DOCUWORKS_DPI))
+        self.dpi_input.setAlignment(Qt.AlignCenter)
+        # xdwlibのDocuWorks画像出力が対応する範囲に入力を制限する。
+        self.dpi_input.setValidator(
+            QIntValidator(MIN_DOCUWORKS_DPI, MAX_DOCUWORKS_DPI, self)
+        )
+        self.dpi_input.setToolTip(
+            f"DocuWorks文書をTIFFへ変換する解像度（{MIN_DOCUWORKS_DPI}～{MAX_DOCUWORKS_DPI} DPI）"
+        )
         self.clear_selected_button = QPushButton("選択行クリア")
         self.clear_button = QPushButton("クリア")
 
@@ -135,6 +150,10 @@ class MainWindow(QMainWindow):
         right_layout.addSpacing(24)
         right_layout.addWidget(self.g4_button)
         right_layout.addWidget(self.lzw_button)
+        # 出力ボタン群とDocuWorks変換設定を視覚的に分ける。
+        right_layout.addSpacing(12)
+        right_layout.addWidget(self.dpi_label)
+        right_layout.addWidget(self.dpi_input)
         right_layout.addStretch(1)
         right_layout.addWidget(self.clear_selected_button)
         right_layout.addWidget(self.clear_button)
@@ -277,15 +296,39 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("出力対象のページがありません。", 5000)
             return
 
+        try:
+            docuworks_dpi = self.get_docuworks_dpi()
+        except ValueError as exc:
+            self.statusBar().showMessage(str(exc), 5000)
+            return
+
         entries = self.collect_entries()
         output_path = self.build_auto_output_path(entries)
         try:
-            self.create_merged_tiff(entries, output_path, compression)
+            self.create_merged_tiff(
+                entries, output_path, compression, docuworks_dpi=docuworks_dpi
+            )
         except Exception as exc:
             self.statusBar().showMessage(f"TIFF出力に失敗: {exc}", 10000)
             return
 
         self.statusBar().showMessage(f"出力完了: {output_path}", 10000)
+
+    def get_docuworks_dpi(self) -> int:
+        """画面で指定されたDocuWorks変換DPIを取得する。"""
+        text = self.dpi_input.text().strip()
+        if not text:
+            raise ValueError("DocuWorks変換DPIを入力してください。")
+
+        try:
+            dpi = int(text)
+        except ValueError as exc:
+            raise ValueError("DocuWorks変換DPIは整数で入力してください。") from exc
+        if not MIN_DOCUWORKS_DPI <= dpi <= MAX_DOCUWORKS_DPI:
+            raise ValueError(
+                f"DocuWorks変換DPIは{MIN_DOCUWORKS_DPI}～{MAX_DOCUWORKS_DPI}の範囲で入力してください。"
+            )
+        return dpi
 
     def collect_entries(self) -> List[PageEntry]:
         entries: List[PageEntry] = []
@@ -327,6 +370,7 @@ class MainWindow(QMainWindow):
         entries: List[PageEntry],
         output_path: Path,
         compression: str,
+        docuworks_dpi: int,
     ) -> None:
         frames: List[Image.Image] = []
         xdw_docs: Dict[Path, object] = {}
@@ -342,6 +386,7 @@ class MainWindow(QMainWindow):
                             order=order,
                             temp_dir=Path(temp_dir),
                             opened_docs=xdw_docs,
+                            dpi=docuworks_dpi,
                         )
 
                     if compression == "group4":
@@ -361,7 +406,7 @@ class MainWindow(QMainWindow):
             save_all=True,
             append_images=rest,
             compression=compression,
-            dpi=(400, 400),
+            dpi=(docuworks_dpi, docuworks_dpi),
         )
 
         for frame in frames:
@@ -385,6 +430,7 @@ class MainWindow(QMainWindow):
         order: int,
         temp_dir: Path,
         opened_docs: Dict[Path, object],
+        dpi: int,
     ) -> Image.Image:
         doc = opened_docs.get(entry.source_path)
         if doc is None:
@@ -394,7 +440,7 @@ class MainWindow(QMainWindow):
         temp_tiff = temp_dir / f"docuworks_{order:05d}.tif"
         doc.page(entry.page_index).export_image(
             path=str(temp_tiff),
-            dpi=400,
+            dpi=dpi,
             format="TIFF",
             compress="NOCOMPRESS",
         )
