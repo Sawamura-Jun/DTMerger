@@ -103,7 +103,7 @@ class PageListWidget(QListWidget):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("DTMerger v1.0.0")
+        self.setWindowTitle("DTMerger v1.1.0")
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.setAcceptDrops(True)
         if APP_ICON_PATH.exists():
