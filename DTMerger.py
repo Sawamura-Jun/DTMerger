@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
 
+import pypdfium2 as pdfium
 from PIL import Image
 from PySide6.QtCore import QItemSelectionModel, Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QIcon, QIntValidator, QPainter
@@ -39,14 +40,15 @@ MAX_DOCUWORKS_DPI = 600
 
 TIFF_EXTENSIONS = {".tif", ".tiff"}
 DOCUWORKS_EXTENSIONS = {".xdw", ".xbd", ".xct"}
-SUPPORTED_EXTENSIONS = TIFF_EXTENSIONS | DOCUWORKS_EXTENSIONS
+PDF_EXTENSIONS = {".pdf"}
+SUPPORTED_EXTENSIONS = TIFF_EXTENSIONS | DOCUWORKS_EXTENSIONS | PDF_EXTENSIONS
 
 
 @dataclass
 class PageEntry:
     source_path: Path
     page_index: int
-    source_type: str  # "tiff" or "docuworks"
+    source_type: str  # "tiff"、"docuworks"、"pdf"のいずれか
 
     @property
     def label(self) -> str:
@@ -132,7 +134,8 @@ class MainWindow(QMainWindow):
             QIntValidator(MIN_DOCUWORKS_DPI, MAX_DOCUWORKS_DPI, self)
         )
         self.dpi_input.setToolTip(
-            f"DocuWorks文書をTIFFへ変換する解像度（{MIN_DOCUWORKS_DPI}～{MAX_DOCUWORKS_DPI} DPI）"
+            "DocuWorks文書とPDFをTIFFへ変換する解像度"
+            f"（{MIN_DOCUWORKS_DPI}～{MAX_DOCUWORKS_DPI} DPI）"
         )
         self.clear_selected_button = QPushButton("選択行クリア")
         self.clear_button = QPushButton("クリア")
@@ -206,6 +209,9 @@ class MainWindow(QMainWindow):
                 elif ext in DOCUWORKS_EXTENSIONS:
                     page_count = self.get_docuworks_page_count(path)
                     source_type = "docuworks"
+                elif ext in PDF_EXTENSIONS:
+                    page_count = self.get_pdf_page_count(path)
+                    source_type = "pdf"
                 else:
                     continue
             except Exception as exc:
@@ -238,6 +244,15 @@ class MainWindow(QMainWindow):
     def get_docuworks_page_count(path: Path) -> int:
         with xdwopen(str(path), readonly=True) as doc:
             return doc.pages
+
+    @staticmethod
+    def get_pdf_page_count(path: Path) -> int:
+        """PDFの総ページ数を取得する。"""
+        doc = pdfium.PdfDocument(str(path))
+        try:
+            return len(doc)
+        finally:
+            doc.close()
 
     def move_selected_up(self) -> None:
         selected_rows = sorted(
@@ -374,13 +389,14 @@ class MainWindow(QMainWindow):
     ) -> None:
         frames: List[Image.Image] = []
         xdw_docs: Dict[Path, object] = {}
+        pdf_docs: Dict[Path, object] = {}
 
         with tempfile.TemporaryDirectory() as temp_dir:
             try:
                 for order, entry in enumerate(entries):
                     if entry.source_type == "tiff":
                         frame = self.load_tiff_page(entry.source_path, entry.page_index)
-                    else:
+                    elif entry.source_type == "docuworks":
                         frame = self.convert_docuworks_page(
                             entry=entry,
                             order=order,
@@ -388,12 +404,22 @@ class MainWindow(QMainWindow):
                             opened_docs=xdw_docs,
                             dpi=docuworks_dpi,
                         )
+                    elif entry.source_type == "pdf":
+                        frame = self.convert_pdf_page(
+                            entry=entry,
+                            opened_docs=pdf_docs,
+                            dpi=docuworks_dpi,
+                        )
+                    else:
+                        raise ValueError(f"未対応のファイル種別です: {entry.source_type}")
 
                     if compression == "group4":
                         frame = self.ensure_group4_mode(frame)
                     frames.append(frame)
             finally:
                 for doc in xdw_docs.values():
+                    doc.close()
+                for doc in pdf_docs.values():
                     doc.close()
 
         if not frames:
@@ -447,6 +473,37 @@ class MainWindow(QMainWindow):
 
         with Image.open(temp_tiff) as img:
             return img.copy()
+
+    @staticmethod
+    def convert_pdf_page(
+        entry: PageEntry,
+        opened_docs: Dict[Path, object],
+        dpi: int,
+    ) -> Image.Image:
+        """PDFの指定ページを画面指定DPIでPillow画像へ変換する。"""
+        doc = opened_docs.get(entry.source_path)
+        if doc is None:
+            doc = pdfium.PdfDocument(str(entry.source_path))
+            opened_docs[entry.source_path] = doc
+
+        page = doc[entry.page_index]
+        try:
+            # PDFは72 DPIを基準とするため、画面指定DPIから描画倍率を計算する。
+            bitmap = page.render(
+                scale=dpi / 72,
+                draw_annots=True,
+            )
+            try:
+                pil_image = bitmap.to_pil()
+                try:
+                    # PDFiumのバッファを破棄した後も使える独立した画像を返す。
+                    return pil_image.copy()
+                finally:
+                    pil_image.close()
+            finally:
+                bitmap.close()
+        finally:
+            page.close()
 
     @staticmethod
     def ensure_group4_mode(img: Image.Image) -> Image.Image:
